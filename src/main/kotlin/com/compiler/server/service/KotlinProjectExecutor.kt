@@ -1,12 +1,19 @@
 package com.compiler.server.service
 
+import androidx.compose.compiler.plugins.kotlin.ComposeConfiguration
 import com.compiler.server.compiler.KotlinFile
 import com.compiler.server.compiler.components.*
 import com.compiler.server.model.*
 import com.compiler.server.model.bean.VersionInfo
+import com.intellij.openapi.util.Disposer
 import component.KotlinEnvironment
 import model.Completion
+import org.jetbrains.kotlin.cli.jvm.compiler.EnvironmentConfigFiles
 import org.jetbrains.kotlin.cli.jvm.compiler.KotlinCoreEnvironment
+import org.jetbrains.kotlin.config.ApiVersion
+import org.jetbrains.kotlin.config.LanguageVersion
+import org.jetbrains.kotlin.config.LanguageVersionSettingsImpl
+import org.jetbrains.kotlin.config.languageVersionSettings
 import org.jetbrains.kotlin.psi.KtFile
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
@@ -18,6 +25,7 @@ class KotlinProjectExecutor(
   private val version: VersionInfo,
   private val kotlinToJSTranslator: KotlinToJSTranslator,
   private val swiftExportTranslator: SwiftExportTranslator,
+  private val composeIrGenerator: ComposeIrGenerator,
   private val kotlinEnvironment: KotlinEnvironment,
   private val loggerDetailsStreamer: LoggerDetailsStreamer? = null,
 ) {
@@ -57,11 +65,16 @@ class KotlinProjectExecutor(
     return convertSwiftWithConverter(project)
   }
 
+  fun convertToComposeIr(project: Project): ComposeIrCodegenResult {
+    return convertComposeIr(project)
+  }
+
   fun complete(project: Project, line: Int, character: Int): List<Completion> {
     return kotlinEnvironment.environment {
       val file = getFilesFrom(project, it).first()
       try {
-        completionProvider.complete(file, line, character, project.confType, it)
+        val projectType = if (project.confType == ProjectType.SWIFT_EXPORT) ProjectType.COMPOSE_WASM else project.confType
+        completionProvider.complete(file, line, character, projectType, it)
       } catch (e: Exception) {
         log.warn("Exception in getting completions. Project: $project", e)
         emptyList()
@@ -135,6 +148,24 @@ class KotlinProjectExecutor(
       project.confType,
       getVersion().version
     )
+  }
+
+  private fun convertComposeIr(
+    project: Project
+  ): ComposeIrCodegenResult {
+    val configuration = kotlinEnvironment.composeWasmConfiguration.copy()
+    configuration.languageVersionSettings = LanguageVersionSettingsImpl(LanguageVersion.LATEST_STABLE, ApiVersion.LATEST_STABLE)
+    configuration.put(ComposeConfiguration.STRONG_SKIPPING_ENABLED_KEY, true)
+    configuration.put(ComposeConfiguration.SOURCE_INFORMATION_ENABLED_KEY, true)
+    val env = KotlinCoreEnvironment.createForProduction(
+      projectDisposable = Disposer.newDisposable(),
+      configuration = configuration,
+      configFiles = EnvironmentConfigFiles.JS_CONFIG_FILES
+    )
+    val files = getFilesFrom(project, env).map { it.kotlinFile }
+    val result = composeIrGenerator.run(files, env, configuration)
+    logExecutionResult(project, result)
+    return result
   }
 
   private fun getFilesFrom(project: Project, coreEnvironment: KotlinCoreEnvironment) = project.files.map {

@@ -82,6 +82,7 @@ dependencies {
     implementation(project(":executors", configuration = "default"))
     implementation(project(":common", configuration = "default"))
     implementation(project(":swift-export-playground", configuration = "default"))
+    implementation("org.jetbrains.kotlin:kotlin-compose-compiler-plugin:$kotlinVersion")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test") {
         exclude(group = "org.junit.vintage", module = "junit-vintage-engine")
